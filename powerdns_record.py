@@ -124,11 +124,10 @@ except ImportError:
 
 class PowerDNSError(Exception):
     def __init__(self, url, status_code, message):
+        super().__init__(url, status_code, message)
         self.url = url
         self.status_code = status_code
         self.message = message
-        super(PowerDNSError, self).__init__()
-
 
 class PowerDNSClient:
     def __init__(self, host, port, prot, api_key, api_username, api_password, verify):
@@ -160,12 +159,13 @@ class PowerDNSClient:
     def _get_request_error_message(self, data):
         try:
             request_json = data.json()
+            request_error = None
             if 'error' in request_json:
                 request_error = request_json.get('error')
             elif 'errors' in request_json:
                 request_error = request_json.get('errors')
-            else:
-                request_error = 'No error message found'
+            elif 'msg' in request_json:
+                request_error = request_json.get('msg')
             return request_error
         except Exception:
           pass
@@ -187,42 +187,16 @@ class PowerDNSClient:
 
         return name
 
-    def get_zone(self, server, name):
-        req = self.session.get(url=self._get_zone_url(server, name))
-        if req.status_code == 422:  # zone does not exist
-            return None
-        return self._handle_request(req)
-
     def get_record(self, server, zone, name, rtype):
         """Search for a given record (name) in the specified zone."""
-        url = self._get_search_url(server)
-        params = {'q': name}
+        url = self._get_zone_url(server, zone)
 
-        resp = self._handle_request(self.session.get(url=url, params=params))
+        resp = self._handle_request(self.session.get(url=url))
 
         # Canonicalize record name and zone
         canonical_name = self._make_canonical(name)
-        canonical_zone = self._make_canonical(zone)
-
-        # Convert search result response to RRSet object
-        rrset = dict(records=[], comments=[])
-
-        for record in resp:
-            if record['object_type'] != 'record' or record['type'] != rtype:
-                continue
-
-            if record['name'] == canonical_name and record['zone'] == canonical_zone:
-
-                if 'name' not in rrset:
-                    rrset['name'] = record['name']
-                if 'type' not in rrset:
-                    rrset['type'] = record['type']
-                if 'ttl' not in rrset:
-                    rrset['ttl'] = record['ttl']
-
-                rrentry = dict(content=record['content'],
-                               disabled=record['disabled'])
-                rrset['records'].append(rrentry)
+        rrsets = resp['rrsets']
+        rrset = next((r for r in rrsets if r['name'] == canonical_name and r['type'] == rtype), dict(records=[], comments=[]))
 
         return rrset
 
@@ -362,7 +336,14 @@ def ensure(module, pdns_client):
                 # Add provided content to record content payload
                 record_content.append(item)
 
+        # If the existing content includes all items in the content input
+        if len(set(existing_content)) > len(set(content)) and exclusive:
+            record_content = content
+
         if len(record_content) > 0:
+            print(len(record_content))
+            # Add items that are both in the content input and existing content
+            record_content = set(record_content + content)
             # Add existing content to payload if not exclusive
             if not exclusive:
                 record_content = existing_content + [item for item in record_content if item not in existing_content]
@@ -428,9 +409,9 @@ def main():
                     pdns_host=dict(type='str', default='127.0.0.1'),
                     pdns_port=dict(type='int', default=8081),
                     pdns_prot=dict(type='str', default='http', choices=['http', 'https']),
-                    pdns_api_key=dict(type='str', required=False),
+                    pdns_api_key=dict(type='str', required=False, no_log=True),
                     pdns_api_username=dict(type='str', required=False),
-                    pdns_api_password=dict(type='str', required=False),
+                    pdns_api_password=dict(type='str', required=False, no_log=True),
                     strict_ssl_checking=dict(type='bool', default=True),
             ),
             supports_check_mode=True,
