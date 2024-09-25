@@ -341,7 +341,6 @@ def ensure(module, pdns_client):
             record_content = content
 
         if len(record_content) > 0:
-            print(len(record_content))
             # Add items that are both in the content input and existing content
             record_content = set(record_content + content)
             # Add existing content to payload if not exclusive
